@@ -1,0 +1,19 @@
+// For format details, see https://aka.ms/devcontainer.json.
+{
+	"name": "Python 3",
+	"image": "mcr.microsoft.com/devcontainers/python:1-3.12-bullseye",
+
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"ansible.python.interpreterPath": "/usr/local/bin/python"
+			},
+			"extensions": [
+				"redhat.ansible",
+				"ms-python.python"
+			]
+		}
+	},
+
+    "postCreateCommand": "pip3 install --user -r ./.devcontainer/requirements.txt && ansible-galaxy collection install -r ./ansible/requirements.yml"
+}

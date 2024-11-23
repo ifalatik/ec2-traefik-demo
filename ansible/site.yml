@@ -1,0 +1,114 @@
+---
+
+- name: Initial config for Demo EC2 instance
+  hosts: demo_ec2_server
+  become: true
+  tasks:
+    - name: Install docker
+      ansible.builtin.dnf:
+        name:
+          - docker
+        state: present
+        update_cache: true
+    - name: Enable and start Docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+    - name: Add ansible_user to docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+    - name: Add user docker-user to docker group
+      ansible.builtin.user:
+        name: docker-user
+        uid: 1001
+        groups: docker
+        append: true
+    - name: Ensure docker cli-plugins directory exists
+      become: true
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+    - name: Download and install docker-compose release
+      become: true
+      ansible.builtin.get_url:
+        url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64"
+        dest: /usr/local/lib/docker/cli-plugins/docker-compose
+        owner: root
+        group: root
+        mode: "0755"
+    - name: Install urllib3 version compatible with pip docker package and awscli
+      ansible.builtin.pip:
+        name: urllib3<1.27,>=1.25.4
+
+- name: Deploy projects
+  hosts: demo_ec2_server
+  pre_tasks:
+    - name: Get docker group id
+      ansible.builtin.shell: "set -o pipefail && getent group docker | cut -d: -f3"
+      changed_when: false
+      register: docker_group_id
+  roles:
+    - role: ifalatik.docker.project_deployment
+      vars:
+        project_deployment_base_path: "/opt/project_deployment_projects"
+        project_deployment_docker_user: "docker-user"
+        project_deployment_owner: "docker-user"
+        project_deployment_group: "docker-user"
+        project_deployment_projects:
+          traefik:
+            services:
+              traefik:
+                image: "traefik:v3"
+                container_name: "traefik"
+                depends_on:
+                  - "docker_socket_proxy"
+                command: "-c /etc/traefik/traefik.yml"
+                ports:
+                  - "80:80"
+                  - "443:443"
+                volumes:
+                  - "./traefik.yml:/etc/traefik/traefik.yml:ro"
+                  - "./dynamic:/etc/traefik/dynamic:ro"
+                  - "./letsencrypt:/letsencrypt"
+                networks:
+                  - "traefik_proxy"
+                  - "docker_proxy"
+                logging:
+                  driver: "json-file"
+                  options:
+                    max-size: "100m"
+                    max-file: "3"
+              docker_socket_proxy:
+                image: "wollomatic/socket-proxy:1"
+                container_name: "dockersocketproxy"
+                user: "65534:{{ docker_group_id.stdout }}"
+                command:
+                  - "-loglevel=info"
+                  - "-allowhealthcheck"
+                  - "-listenip=0.0.0.0"
+                  - "-allowfrom=traefik"
+                  - '-allowGET=/v1\..{1,2}/(version|containers/.*|events.*)'
+                  - "-shutdowngracetime=5"
+                  - "-watchdoginterval=600"
+                  - "-stoponwatchdog"
+                volumes:
+                  - "/var/run/docker.sock:/var/run/docker.sock"
+                networks:
+                  - "docker_proxy"
+                healtcheck:
+                  test: "./healthcheck"
+                  interval: 10s
+                  timeout: 5s
+                  retries: 2
+            networks:
+              traefik_proxy:
+                external: true
+              docker_proxy:
+            # don't restart service when only dynamic configuration changes
+            regex_ignore_changes_remote_paths: ['{{ project_deployment_base_path }}/traefik/dynamic/.*']

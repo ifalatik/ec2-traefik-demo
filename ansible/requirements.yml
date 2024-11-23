@@ -1,0 +1,5 @@
+---
+
+collections:
+  - name: ifalatik.docker
+    version: "3.1.0"

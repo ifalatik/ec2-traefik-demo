@@ -1,0 +1,4 @@
+---
+
+# store this in a secret manager or ansible-vault
+traefik_api_password: "<some_password>"
